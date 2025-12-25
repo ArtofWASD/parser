@@ -12,12 +12,15 @@ playwright_context = None
 async def startup():
     global browser, playwright_context
     playwright_context = await async_playwright().start()
-    # Запускаем chromium с нужными флагами для работы в Docker
     browser = await playwright_context.chromium.launch(
         headless=True,
-        args=["--no-sandbox", "--disable-setuid-sandbox"]
+        args=[
+            "--no-sandbox", 
+            "--disable-setuid-sandbox", 
+            "--disable-dev-shm-usage", # Важно для Docker (использует /tmp вместо RAM)
+            "--disable-gpu"
+        ]
     )
-
 @app.on_event("shutdown")
 async def shutdown():
     await browser.close()
