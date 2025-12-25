@@ -1,30 +1,23 @@
 from fastapi import FastAPI, HTTPException
 from playwright.async_api import async_playwright
-import uvicorn
+from contextlib import asynccontextmanager
 
-app = FastAPI()
-
-# Глобальные переменные для браузера
-browser = None
-playwright_context = None
-
-@app.on_event("startup")
-async def startup():
+# Создаем lifespan-менеджер для управления браузером
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Код при запуске (startup)
     global browser, playwright_context
     playwright_context = await async_playwright().start()
     browser = await playwright_context.chromium.launch(
         headless=True,
-        args=[
-            "--no-sandbox", 
-            "--disable-setuid-sandbox", 
-            "--disable-dev-shm-usage", # Важно для Docker (использует /tmp вместо RAM)
-            "--disable-gpu"
-        ]
+        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     )
-@app.on_event("shutdown")
-async def shutdown():
+    yield
+    # Код при выключении (shutdown)
     await browser.close()
     await playwright_context.stop()
+
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/search")
 async def search(query: str):
@@ -35,10 +28,9 @@ async def search(query: str):
     url = f"https://skladmotorov.ru/search-by-string/?query={query}"
     
     try:
-        await page.goto(url, wait_until="networkidle", timeout=15000)
-        
-        # Ждем появления товаров или сообщения, что ничего не найдено
-        await page.wait_for_selector(".c-good-container", timeout=5000)
+        # Увеличиваем таймаут до 20 сек, так как сайт может быть медленным
+        await page.goto(url, wait_until="networkidle", timeout=20000)
+        await page.wait_for_selector(".c-good-container", timeout=10000)
         
         items = await page.query_selector_all(".c-good-container")
         results = []
@@ -57,11 +49,7 @@ async def search(query: str):
         
         return {"query": query, "results": results, "count": len(results)}
 
-    except Exception as e:
-        # Если ничего не найдено (timeout), возвращаем пустой список
+    except Exception:
         return {"query": query, "results": [], "count": 0}
     finally:
         await page.close()
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)

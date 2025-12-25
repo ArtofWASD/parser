@@ -1,17 +1,15 @@
-# Используем официальный образ Playwright, в котором уже есть все зависимости для браузеров
-FROM mcr.microsoft.com/playwright/python:v1.40.0-jammy
+# Используем актуальную версию образа, которую просит Playwright в логах
+FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
 
 WORKDIR /app
 
-# Копируем зависимости и устанавливаем их
+# Копируем и устанавливаем зависимости
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Копируем код
 COPY main.py .
 
-# Открываем порт для FastAPI
 EXPOSE 8000
 
-# Запускаем приложение
 CMD ["python", "main.py"]
