@@ -79,18 +79,24 @@ async def search(query: str):
             except:
                 items = []
 
-            for item in items:
-                # Находим ссылку на карточку
-                link_el = await item.query_selector("a[href*='/autopart-product/']")
-                if link_el:
-                    path = await link_el.get_attribute("href")
-                    full_url = f"https://skladmotorov.ru{path}"
-                    
-                    # Заходим внутрь за деталями
-                    await asyncio.sleep(1.5) # Пауза для стабильности
-                    details = await scrape_card_details(browser, full_url)
-                    details["searched_query"] = q
-                    final_results.append(details)
+            if not items:
+                final_results.append({
+                    "searched_query": q,
+                    "message": f"По данному номеру ({q}) товары не найдены"
+                })
+            else:
+                for item in items:
+                    # Находим ссылку на карточку
+                    link_el = await item.query_selector("a[href*='/autopart-product/']")
+                    if link_el:
+                        path = await link_el.get_attribute("href")
+                        full_url = f"https://skladmotorov.ru{path}"
+                        
+                        # Заходим внутрь за деталями
+                        await asyncio.sleep(1.5) # Пауза для стабильности
+                        details = await scrape_card_details(browser, full_url)
+                        details["searched_query"] = q
+                        final_results.append(details)
             
         except Exception:
             continue
