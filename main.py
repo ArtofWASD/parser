@@ -46,7 +46,10 @@ async def search_get(
         raise HTTPException(status_code=400, detail="Query is empty")
     
     queries = [q.strip() for q in query.split(",")]
-    selected_sites = sites.split(",") if sites else None
+    if sites and sites.lower() == "all":
+        selected_sites = None
+    else:
+        selected_sites = sites.split(",") if sites else None
     
     results = await parser_manager.search_all(queries, selected_sites)
     return {"results": results}
@@ -57,7 +60,11 @@ async def search_post(request: SearchRequest):
     if not request.queries:
         raise HTTPException(status_code=400, detail="Queries list is empty")
     
-    results = await parser_manager.search_all(request.queries, request.sites)
+    selected_sites = request.sites
+    if selected_sites and len(selected_sites) == 1 and selected_sites[0].lower() == "all":
+        selected_sites = None
+        
+    results = await parser_manager.search_all(request.queries, selected_sites)
     return {"results": results}
 
 if __name__ == "__main__":
