@@ -1,7 +1,7 @@
 import asyncio
 from playwright.async_api import Browser
 from .skladmotorov import SkladMotorovParser
-from .site2 import Site2Parser
+from .leoparts import LeopartsParser
 from .site3 import Site3Parser
 
 class ParserManager:
@@ -10,7 +10,7 @@ class ParserManager:
         self.semaphore = asyncio.Semaphore(max_concurrent_pages)
         self.parsers = {
             "skladmotorov.ru": SkladMotorovParser(browser),
-            "site2.com": Site2Parser(browser),
+            "leoparts.ru": LeopartsParser(browser),
             "site3.com": Site3Parser(browser),
         }
 
