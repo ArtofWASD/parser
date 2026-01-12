@@ -10,7 +10,6 @@ class EuroautoParser(BaseParser):
     async def search(self, query: str) -> list:
         async with self.semaphore:
             page = await self.browser.new_page()
-            # Устанавливаем реальный User-Agent
             await page.set_extra_http_headers({
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
@@ -19,43 +18,58 @@ class EuroautoParser(BaseParser):
             results = []
             
             try:
-                # Шаг 1: Идем на главную страницу
-                response = await page.goto(self.base_url, wait_until="domcontentloaded", timeout=30000)
-                
-                if response and response.status == 403:
+                # Шаг 1: Идем на главную
+                await page.goto(self.base_url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(2) # Ждем прогрузки JS
+
+                # Шаг 2: Обработка модальных окон (выбор города и т.д.)
+                # Если висит выбор города, он может перекрывать инпут
+                city_modal = await page.query_selector(".modal-city-wrap, .modal-city-confirm")
+                if city_modal and await city_modal.is_visible():
+                    # Пытаемся нажать "Да" или закрыть
+                    confirm_btn = await page.query_selector(".modal-city-wrap .btn-success, .modal-city-confirm .btn-yes")
+                    if confirm_btn:
+                        await confirm_btn.click()
+                        await asyncio.sleep(1)
+
+                # Шаг 3: Поиск строки ввода
+                # Пробуем разные селекторы
+                search_selectors = ["#header-search", "input[name='q']", "input[placeholder*='номер запчасти']", ".hd_search-input"]
+                search_input = None
+                for selector in search_selectors:
+                    try:
+                        search_input = await page.wait_for_selector(selector, timeout=5000)
+                        if search_input: break
+                    except: continue
+
+                if not search_input:
+                    # Если совсем не нашли, попробуем еще раз через секунду
+                    await asyncio.sleep(2)
+                    search_input = await page.query_selector("#header-search")
+
+                if not search_input:
                     return [{
                         "searched_query": query,
-                        "error": "Access Denied (403 Forbidden).",
+                        "error": "Не удалось найти строку поиска на странице.",
                         "site": "euroauto.ru"
                     }]
 
-                # Шаг 2: Ищем строку поиска и вбиваем артикул
-                search_input_selector = "#header-search"
-                try:
-                    await page.wait_for_selector(search_input_selector, timeout=10000)
-                    await page.fill(search_input_selector, query)
-                    await page.press(search_input_selector, "Enter")
-                except Exception as e:
-                    # Если не нашли строку поиска на главной, возможно мы уже где-то не там
-                    return [{
-                        "searched_query": query,
-                        "error": f"Search input not found: {str(e)}",
-                        "site": "euroauto.ru"
-                    }]
+                # Вбиваем артикул
+                await search_input.fill("") # Очистим на всякий случай
+                await search_input.type(query, delay=50)
+                await page.press(search_input_selector if "search_input_selector" in locals() else "#header-search", "Enter")
 
-                # Шаг 3: Ждем результата
-                # Сайт может редиректнуть или показать список
-                await asyncio.sleep(3)
+                # Шаг 4: Ожидание результата
+                await asyncio.sleep(4)
                 
                 try:
-                    # Ждем либо карточку товара, либо список, либо сообщение "ничего не найдено"
-                    await page.wait_for_selector("h1, .part-item, .product-card, .part-container-1, #product-new-block, .search-not-found", timeout=15000)
+                    await page.wait_for_selector("h1, .part-item, .product-card, #product-new-block, .search-not-found", timeout=12000)
                 except:
                     pass
 
                 current_url = page.url
                 
-                # Проверяем, не на странице ли мы товара
+                # Проверка на страницу товара
                 is_product_page = any(x in current_url for x in ["/firms/", "/parts/", "/part/"]) and "/filter/" not in current_url
                 if not is_product_page:
                     product_container = await page.query_selector("#product-new-block, .part-container-1, .product-detail")
@@ -69,13 +83,22 @@ class EuroautoParser(BaseParser):
                         detail["site"] = "euroauto.ru"
                         results.append(detail)
                 else:
-                    # Проверяем список или "не найдено"
+                    # Список результатов
                     items = await page.query_selector_all(".part-item, .product-card, .item, .parts-list-item, .listing-item")
                     
                     if not items:
+                        # Финальная проверка на "не найдено" текстом
+                        content = await page.content()
+                        if "не найдены" in content or "ничего не нашлось" in content.lower():
+                             return [{
+                                "searched_query": query,
+                                "message": f"По данному номеру ({query}) товары не найдены",
+                                "site": "euroauto.ru"
+                            }]
+                        
                         return [{
                             "searched_query": query,
-                            "message": f"По данному номеру ({query}) товары не найдены",
+                            "error": "Не удалось загрузить результаты поиска (timeout or unknown layout)",
                             "site": "euroauto.ru"
                         }]
                     
