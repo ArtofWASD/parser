@@ -35,9 +35,11 @@ class EuroautoParser(BaseParser):
                 await asyncio.sleep(2)
 
                 # Проверяем, не перенаправило ли нас сразу на страницу товара
-                # Обычно URL меняется на /firms/brand/article/ или /parts/brand/article/
                 current_url = page.url
-                if "/firms/" in current_url or "/parts/" in current_url and "/filter/" not in current_url:
+                # Улучшенная проверка на страницу товара (firms, parts, part, catalog/part)
+                is_product_page = any(x in current_url for x in ["/firms/", "/parts/", "/part/"]) and "/filter/" not in current_url
+                
+                if is_product_page:
                     detail = await self._extract_details(page, current_url)
                     if detail:
                         detail["searched_query"] = query
@@ -46,9 +48,14 @@ class EuroautoParser(BaseParser):
                 else:
                     # Мы на странице списка результатов или фильтров
                     # Попробуем найти элементы в списке
-                    # На euroauto.ru список товаров часто в .parts-list или .items
-                    items = await page.query_selector_all(".part-item, .product-card, .item")
+                    # На euroauto.ru список товаров часто в .part-item, .product-card, .item, .parts-list-item
+                    items = await page.query_selector_all(".part-item, .product-card, .item, .parts-list-item, .listing-item")
                     
+                    if not items:
+                        # Если совсем ничего не нашли, попробуем еще раз подождать
+                        await asyncio.sleep(3)
+                        items = await page.query_selector_all(".part-item, .product-card, .item, .parts-list-item, .listing-item")
+
                     if not items:
                         return [{
                             "searched_query": query,
@@ -57,8 +64,9 @@ class EuroautoParser(BaseParser):
                         }]
                     
                     for item in items[:10]: # Ограничим до 10 для быстроты
-                        name_el = await item.query_selector(".name, h3, .title")
-                        price_el = await item.query_selector(".price, .cost")
+                        name_el = await item.query_selector(".name, h3, .title, .product-name")
+                        # Селектор цены поменяли на .product_price + старые варианты
+                        price_el = await item.query_selector(".product_price, .price, .cost, .product-price")
                         link_el = await item.query_selector("a")
                         
                         if name_el and link_el:
@@ -94,6 +102,7 @@ class EuroautoParser(BaseParser):
             })
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(1) # Ждем прогрузки JS
                 return await self._extract_details(page, url)
             except Exception as e:
                 return {"name": "Ошибка загрузки карточки", "url": url, "error": str(e)}
@@ -102,30 +111,40 @@ class EuroautoParser(BaseParser):
 
     async def _extract_details(self, page, url) -> dict:
         """Вспомогательный метод для извлечения данных со страницы товара."""
-        # Ждем заголовка
+        # Ждем заголовка или признака проданного товара
         try:
-            await page.wait_for_selector("h1", timeout=5000)
+            await page.wait_for_selector("h1, .btn-soldout, .product_price", timeout=7000)
         except:
             pass
             
         title_el = await page.query_selector("h1")
         full_title = await title_el.inner_text() if title_el else "Без названия"
         
-        # Цена может быть в разных местах
-        price_el = await page.query_selector(".price, .product-price, .item-price")
-        full_price = await price_el.inner_text() if price_el else "Цена по запросу"
+        # Цена (.product_price с подчеркиванием!)
+        price_el = await page.query_selector(".product_price, .product-price, .item-price, .price")
+        full_price = await price_el.inner_text() if price_el else "По запросу"
         
-        # Изображение
-        img_el = await page.query_selector(".product-image img, .main-image img, .photo")
+        # Если есть кнопка "Товар продан", помечаем это
+        sold_out_el = await page.query_selector(".btn-soldout")
+        if sold_out_el:
+            sold_text = await sold_out_el.inner_text()
+            if "продан" in sold_text.lower():
+                full_price = "Продано"
+
+        # Изображение (.big-preview img, .main-img, .img-thumbnail)
+        img_el = await page.query_selector(".big-preview img, .main-img, .img-thumbnail, .product-photo img")
         img_url = await img_el.get_attribute("src") if img_el else None
         if img_url and img_url.startswith("//"):
             img_url = f"https:{img_url}"
         elif img_url and img_url.startswith("/"):
             img_url = f"{self.base_url}{img_url}"
 
-        # Наличие
-        availability_el = await page.query_selector(".availability, .stock, .in-stock")
+        # Наличие (.main-delivery-block)
+        availability_el = await page.query_selector(".main-delivery-block, .availability, .stock")
         availability = await availability_el.inner_text() if availability_el else "Нет данных"
+        if availability:
+            # Очистим от лишних пробелов и переносов
+            availability = " ".join(availability.split())
 
         return {
             "name": full_title.strip(),
