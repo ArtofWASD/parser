@@ -20,7 +20,8 @@ class EuroautoParser(BaseParser):
             
             try:
                 # Шаг 1: Переход по прямой ссылке поиска
-                response = await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+                # Используем networkidle для уверенности, что все JS-блоки прогрузились
+                response = await page.goto(search_url, wait_until="networkidle", timeout=30000)
                 
                 if response and response.status == 403:
                     return [{
@@ -29,21 +30,21 @@ class EuroautoParser(BaseParser):
                         "site": "euroauto.ru"
                     }]
 
-                # Ждем прогрузки контента
-                await asyncio.sleep(2)
+                # Дополнительное ожидание для тяжелых скриптов сайта
+                await asyncio.sleep(3)
                 
                 try:
-                    # Ждем либо список результатов, либо карточку товара, либо "не найдено"
-                    await page.wait_for_selector(".search__item, h1, .product_price, .search-not-found", timeout=10000)
+                    # Ждем базовые элементы
+                    await page.wait_for_selector(".search__item, .search__item_link, h1, .product_price, .search-not-found", timeout=10000)
                 except:
                     pass
 
                 current_url = page.url
                 
-                # Проверяем, не перекинуло ли нас сразу на товар или мы уже на нем
+                # Проверяем на страницу товара (редирект)
                 is_product_page = any(x in current_url for x in ["/firms/", "/parts/", "/part/"]) and "/filter/" not in current_url
                 if not is_product_page:
-                    product_container = await page.query_selector("#product-new-block, .part-container-1, .product-detail")
+                    product_container = await page.query_selector("#product-new-block, .part-container-1, .product-detail, .part-page")
                     if product_container:
                         is_product_page = True
                 
@@ -54,12 +55,22 @@ class EuroautoParser(BaseParser):
                         detail["site"] = "euroauto.ru"
                         results.append(detail)
                 else:
-                    # Мы на странице списка результатов
-                    items = await page.query_selector_all(".search__item, .part-item, .product-card")
+                    # Мы на странице списка или поиска
+                    # Ищем любые ссылки или блоки, похожие на результаты
+                    items = await page.query_selector_all(".search__item, .search__item_link, .part-item, .product-card, .listing-item")
                     
                     if not items:
-                        # Финальная проверка на отсутствие результатов
+                        # Если не нашли по селекторам, попробуем найти текстом в ссылках (на всякий случай)
+                        links = await page.query_selector_all("a")
+                        for l in links:
+                            txt = await l.inner_text()
+                            if query in txt:
+                                items = [l]
+                                break
+
+                    if not items:
                         content = await page.content()
+                        title = await page.title()
                         if "не найдены" in content or "ничего не нашлось" in content.lower():
                             return [{
                                 "searched_query": query,
@@ -67,23 +78,29 @@ class EuroautoParser(BaseParser):
                                 "site": "euroauto.ru"
                             }]
                         
+                        # Если пусто и не "не найден", выдаем ошибку с заголовком страницы
                         return [{
                             "searched_query": query,
-                            "error": "Результаты поиска не загружены или имеют неизвестный формат",
+                            "error": f"Результаты не загружены (Page Title: {title}). Возможно, требуется проверка 'Я не робот' или формат страницы изменился.",
                             "site": "euroauto.ru"
                         }]
                     
                     # Обрабатываем список товаров
-                    for item in items[:5]: # Берем первые 5 для детального парсинга
-                        # Пробуем достать ссылку
-                        link_el = await item.query_selector("a.search__item_link, a")
-                        if link_el:
-                            path = await link_el.get_attribute("href")
-                            full_url = f"{self.base_url}{path}" if path.startswith("/") else path
+                    # В .search__item_link часто уже лежит ссылка на товар
+                    processed_urls = set()
+                    for item in items[:5]:
+                        # Пытаемся достать ссылку
+                        href = await item.get_attribute("href")
+                        if not href:
+                            link_el = await item.query_selector("a")
+                            if link_el:
+                                href = await link_el.get_attribute("href")
+                        
+                        if href and href not in processed_urls:
+                            processed_urls.add(href)
+                            full_url = f"{self.base_url}{href}" if href.startswith("/") else href
                             
-                            # На странице поиска часто нет цены, нужно зайти внутрь
-                            # Для экономии ресурсов мы можем либо вернуть только ссылку, 
-                            # либо сделать дополнительный запрос. В данном проекте лучше вернуть полные данные.
+                            # Заходим в товар для получения цены и фото
                             detail = await self.get_details(full_url)
                             if detail:
                                 detail["searched_query"] = query
