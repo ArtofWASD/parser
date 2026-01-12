@@ -71,7 +71,7 @@ class LeopartsParser(BaseParser):
             page = await self.browser.new_page()
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                await page.wait_for_selector("h1.h2", timeout=10000)
+                await page.wait_for_selector("h1.h2", timeout=30000)
                 
                 title_el = await page.query_selector("h1.h2")
                 full_title = await title_el.inner_text() if title_el else "Без названия"

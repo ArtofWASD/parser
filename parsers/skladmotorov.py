@@ -14,11 +14,11 @@ class SkladMotorovParser(BaseParser):
             results = []
             
             try:
-                await page.goto(search_url, wait_until="networkidle", timeout=30000)
+                await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
                 
                 # Ждем появления списка товаров
                 try:
-                    await page.wait_for_selector(".c-good-container", timeout=10000)
+                    await page.wait_for_selector(".c-good-container", timeout=15000)
                     items = await page.query_selector_all(".c-good-container")
                 except:
                     items = []
@@ -72,7 +72,7 @@ class SkladMotorovParser(BaseParser):
             page = await self.browser.new_page()
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                await page.wait_for_selector("h1.h2", timeout=10000)
+                await page.wait_for_selector("h1.h2", timeout=30000)
                 
                 title_el = await page.query_selector("h1.h2")
                 full_title = await title_el.inner_text() if title_el else "Без названия"

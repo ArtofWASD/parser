@@ -15,8 +15,8 @@ async def lifespan(app: FastAPI):
         headless=True,
         args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
     )
-    # Можно настроить лимит одновременно открытых страниц (например 15)
-    parser_manager = ParserManager(browser, max_concurrent_pages=15)
+    # Настройка лимита одновременно открытых страниц (изменено с 15 до 5 для стабильности)
+    parser_manager = ParserManager(browser, max_concurrent_pages=5)
     yield
     await browser.close()
     await playwright_context.stop()
