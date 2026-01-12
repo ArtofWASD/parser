@@ -1,3 +1,4 @@
+import asyncio
 from abc import ABC, abstractmethod
 from playwright.async_api import Browser
 
