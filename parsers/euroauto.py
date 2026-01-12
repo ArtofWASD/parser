@@ -10,42 +10,53 @@ class EuroautoParser(BaseParser):
     async def search(self, query: str) -> list:
         async with self.semaphore:
             page = await self.browser.new_page()
-            # Устанавливаем реальный User-Agent для обхода простых проверок
+            # Устанавливаем реальный User-Agent
             await page.set_extra_http_headers({
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
             })
             
-            search_url = f"{self.base_url}/search/?q={query}"
             results = []
             
             try:
-                # Переход на страницу поиска
-                response = await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+                # Шаг 1: Идем на главную страницу
+                response = await page.goto(self.base_url, wait_until="domcontentloaded", timeout=30000)
                 
-                # Проверяем на 403 Forbidden
                 if response and response.status == 403:
                     return [{
                         "searched_query": query,
-                        "error": "Access Denied (403 Forbidden). Qrator protection detected.",
+                        "error": "Access Denied (403 Forbidden).",
                         "site": "euroauto.ru"
                     }]
 
-                # Ждем отработки JS и возможных редиректов
+                # Шаг 2: Ищем строку поиска и вбиваем артикул
+                search_input_selector = "#header-search"
+                try:
+                    await page.wait_for_selector(search_input_selector, timeout=10000)
+                    await page.fill(search_input_selector, query)
+                    await page.press(search_input_selector, "Enter")
+                except Exception as e:
+                    # Если не нашли строку поиска на главной, возможно мы уже где-то не там
+                    return [{
+                        "searched_query": query,
+                        "error": f"Search input not found: {str(e)}",
+                        "site": "euroauto.ru"
+                    }]
+
+                # Шаг 3: Ждем результата
+                # Сайт может редиректнуть или показать список
                 await asyncio.sleep(3)
                 
-                # Попробуем дождаться ключевых элементов (или списка, или карточки)
                 try:
-                    await page.wait_for_selector("h1, .part-item, .product-card, .part-container-1, #product-new-block", timeout=10000)
+                    # Ждем либо карточку товара, либо список, либо сообщение "ничего не найдено"
+                    await page.wait_for_selector("h1, .part-item, .product-card, .part-container-1, #product-new-block, .search-not-found", timeout=15000)
                 except:
                     pass
 
                 current_url = page.url
                 
-                # Проверяем, не на странице ли мы товара (по URL или по наличию контейнера товара)
+                # Проверяем, не на странице ли мы товара
                 is_product_page = any(x in current_url for x in ["/firms/", "/parts/", "/part/"]) and "/filter/" not in current_url
-                
-                # Если URL не похож на товар, но на странице есть контейнер товара - считаем это страницей товара
                 if not is_product_page:
                     product_container = await page.query_selector("#product-new-block, .part-container-1, .product-detail")
                     if product_container:
@@ -58,8 +69,7 @@ class EuroautoParser(BaseParser):
                         detail["site"] = "euroauto.ru"
                         results.append(detail)
                 else:
-                    # Мы на странице списка результатов или фильтров
-                    # Попробуем найти элементы в списке
+                    # Проверяем список или "не найдено"
                     items = await page.query_selector_all(".part-item, .product-card, .item, .parts-list-item, .listing-item")
                     
                     if not items:
