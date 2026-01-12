@@ -2,8 +2,9 @@ from abc import ABC, abstractmethod
 from playwright.async_api import Browser
 
 class BaseParser(ABC):
-    def __init__(self, browser: Browser):
+    def __init__(self, browser: Browser, semaphore: asyncio.Semaphore):
         self.browser = browser
+        self.semaphore = semaphore
 
     @abstractmethod
     async def search(self, query: str) -> list:

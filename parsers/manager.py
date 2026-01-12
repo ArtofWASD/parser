@@ -9,9 +9,9 @@ class ParserManager:
         self.browser = browser
         self.semaphore = asyncio.Semaphore(max_concurrent_pages)
         self.parsers = {
-            "skladmotorov.ru": SkladMotorovParser(browser),
-            "leoparts.ru": LeopartsParser(browser),
-            "site3.com": Site3Parser(browser),
+            "skladmotorov.ru": SkladMotorovParser(browser, self.semaphore),
+            "leoparts.ru": LeopartsParser(browser, self.semaphore),
+            "site3.com": Site3Parser(browser, self.semaphore),
         }
 
     def get_sites(self) -> list[str]:
@@ -21,7 +21,6 @@ class ParserManager:
     async def search_all(self, queries: list[str], selected_sites: list[str] = None):
         """
         Ищет по всем или выбранным сайтам одновременно.
-        Использует семафор для ограничения количества открытых страниц.
         Возвращает структурированный словарь: { сайт: { запрос: [результаты] } }
         """
         tasks = []
@@ -37,9 +36,8 @@ class ParserManager:
             return {}
 
         async def buffered_search(site_name, parser, query):
-            async with self.semaphore:
-                res = await parser.search(query)
-                return site_name, query, res
+            res = await parser.search(query)
+            return site_name, query, res
 
         for query in queries:
             for site_name, parser in target_parser_items:
