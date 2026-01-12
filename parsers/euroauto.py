@@ -24,20 +24,32 @@ class EuroautoParser(BaseParser):
                 response = await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
                 
                 # Проверяем на 403 Forbidden
-                if response.status == 403:
+                if response and response.status == 403:
                     return [{
                         "searched_query": query,
                         "error": "Access Denied (403 Forbidden). Qrator protection detected.",
                         "site": "euroauto.ru"
                     }]
 
-                # Ждем немного для отработки JS
-                await asyncio.sleep(2)
+                # Ждем отработки JS и возможных редиректов
+                await asyncio.sleep(3)
+                
+                # Попробуем дождаться ключевых элементов (или списка, или карточки)
+                try:
+                    await page.wait_for_selector("h1, .part-item, .product-card, .part-container-1, #product-new-block", timeout=10000)
+                except:
+                    pass
 
-                # Проверяем, не перенаправило ли нас сразу на страницу товара
                 current_url = page.url
-                # Улучшенная проверка на страницу товара (firms, parts, part, catalog/part)
+                
+                # Проверяем, не на странице ли мы товара (по URL или по наличию контейнера товара)
                 is_product_page = any(x in current_url for x in ["/firms/", "/parts/", "/part/"]) and "/filter/" not in current_url
+                
+                # Если URL не похож на товар, но на странице есть контейнер товара - считаем это страницей товара
+                if not is_product_page:
+                    product_container = await page.query_selector("#product-new-block, .part-container-1, .product-detail")
+                    if product_container:
+                        is_product_page = True
                 
                 if is_product_page:
                     detail = await self._extract_details(page, current_url)
@@ -48,14 +60,8 @@ class EuroautoParser(BaseParser):
                 else:
                     # Мы на странице списка результатов или фильтров
                     # Попробуем найти элементы в списке
-                    # На euroauto.ru список товаров часто в .part-item, .product-card, .item, .parts-list-item
                     items = await page.query_selector_all(".part-item, .product-card, .item, .parts-list-item, .listing-item")
                     
-                    if not items:
-                        # Если совсем ничего не нашли, попробуем еще раз подождать
-                        await asyncio.sleep(3)
-                        items = await page.query_selector_all(".part-item, .product-card, .item, .parts-list-item, .listing-item")
-
                     if not items:
                         return [{
                             "searched_query": query,
@@ -63,9 +69,8 @@ class EuroautoParser(BaseParser):
                             "site": "euroauto.ru"
                         }]
                     
-                    for item in items[:10]: # Ограничим до 10 для быстроты
+                    for item in items[:10]:
                         name_el = await item.query_selector(".name, h3, .title, .product-name")
-                        # Селектор цены поменяли на .product_price + старые варианты
                         price_el = await item.query_selector(".product_price, .price, .cost, .product-price")
                         link_el = await item.query_selector("a")
                         
@@ -101,8 +106,7 @@ class EuroautoParser(BaseParser):
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             })
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(1) # Ждем прогрузки JS
+                await page.goto(url, wait_until="networkidle", timeout=30000)
                 return await self._extract_details(page, url)
             except Exception as e:
                 return {"name": "Ошибка загрузки карточки", "url": url, "error": str(e)}
@@ -111,39 +115,37 @@ class EuroautoParser(BaseParser):
 
     async def _extract_details(self, page, url) -> dict:
         """Вспомогательный метод для извлечения данных со страницы товара."""
-        # Ждем заголовка или признака проданного товара
         try:
-            await page.wait_for_selector("h1, .btn-soldout, .product_price", timeout=7000)
+            await page.wait_for_selector("h1, .btn-soldout, .product_price, #product-new-block", timeout=10000)
         except:
             pass
             
         title_el = await page.query_selector("h1")
         full_title = await title_el.inner_text() if title_el else "Без названия"
         
-        # Цена (.product_price с подчеркиванием!)
+        # Цена (.product_price)
         price_el = await page.query_selector(".product_price, .product-price, .item-price, .price")
         full_price = await price_el.inner_text() if price_el else "По запросу"
         
-        # Если есть кнопка "Товар продан", помечаем это
+        # Кнопка "Товар продан"
         sold_out_el = await page.query_selector(".btn-soldout")
         if sold_out_el:
             sold_text = await sold_out_el.inner_text()
             if "продан" in sold_text.lower():
                 full_price = "Продано"
 
-        # Изображение (.big-preview img, .main-img, .img-thumbnail)
-        img_el = await page.query_selector(".big-preview img, .main-img, .img-thumbnail, .product-photo img")
+        # Изображение
+        img_el = await page.query_selector(".big-preview img, .main-img, .img-thumbnail, .product-photo img, #main-img")
         img_url = await img_el.get_attribute("src") if img_el else None
         if img_url and img_url.startswith("//"):
             img_url = f"https:{img_url}"
         elif img_url and img_url.startswith("/"):
             img_url = f"{self.base_url}{img_url}"
 
-        # Наличие (.main-delivery-block)
-        availability_el = await page.query_selector(".main-delivery-block, .availability, .stock")
+        # Наличие
+        availability_el = await page.query_selector(".main-delivery-block, .availability, .stock, .part-price-container")
         availability = await availability_el.inner_text() if availability_el else "Нет данных"
         if availability:
-            # Очистим от лишних пробелов и переносов
             availability = " ".join(availability.split())
 
         return {
