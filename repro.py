@@ -7,7 +7,7 @@ async def test_search():
         browser = await p.chromium.launch(headless=True)
         manager = ParserManager(browser, max_concurrent_pages=5)
         
-        queries = ["1114905"]
+        queries = ["1782109"]
         # Тестируем sites=None (эквивалентно "all")
         results = await manager.search_all(queries, None)
         
