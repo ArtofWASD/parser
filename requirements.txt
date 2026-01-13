@@ -2,3 +2,4 @@ fastapi
 playwright
 uvicorn
 pydantic
+playwright-stealth

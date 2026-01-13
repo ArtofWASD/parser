@@ -5,31 +5,95 @@ from .base import BaseParser
 class EuroautoParser(BaseParser):
     def __init__(self, browser: Browser, semaphore: asyncio.Semaphore):
         super().__init__(browser, semaphore)
-        self.base_url = "https://euroauto.ru"
+        self.base_url = "https://spb.euroauto.ru"
+        self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        self.headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+        }
 
     async def search(self, query: str) -> list:
         async with self.semaphore:
-            page = await self.browser.new_page()
-            search_url = f"{self.base_url}/search/text/{query}/"
+            # Используем контекст с расширенными заголовками
+            context = await self.browser.new_context(
+                user_agent=self.user_agent,
+                extra_http_headers=self.headers,
+                viewport={'width': 1920, 'height': 1080}
+            )
+            page = await context.new_page()
             results = []
             
             try:
-                await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+                # ШАГ 1: Заходим на главную
+                print(f"DEBUG: Заход на главную {self.base_url} для начала поиска...")
+                response = await page.goto(self.base_url, wait_until="networkidle", timeout=30000)
                 
+                if response and response.status in [401, 403]:
+                    print(f"DEBUG: Доступ заблокирован на главной (Статус: {response.status})")
+                    return [{
+                        "searched_query": query,
+                        "error": f"Доступ заблокирован (Статус: {response.status}).",
+                        "site": "euroauto.ru"
+                    }]
+                
+                # ШАГ 2: Ищем поле поиска и вводим запрос
+                # Селекторы для поиска: #header-search, input[name='q'], .hd_search-input
+                search_selector = "input[name='q'], #header-search, .hd_search-input, input[placeholder*='номер запчасти']"
                 try:
-                    await page.wait_for_selector(".search__item, .product_price, h1", timeout=15000)
-                except:
-                    pass
+                    await page.wait_for_selector(search_selector, timeout=10000)
+                    print("DEBUG: Поле поиска найдено, вводим артикул...")
+                    
+                    # Кликаем и очищаем поле (на всякий случай)
+                    await page.click(search_selector)
+                    await page.keyboard.press("Control+A")
+                    await page.keyboard.press("Backspace")
+                    
+                    # Вводим по буквам с небольшим интервалом
+                    await page.type(search_selector, query, delay=100)
+                    await asyncio.sleep(1)
+                    await page.keyboard.press("Enter")
+                    
+                    print(f"DEBUG: Ожидание результатов поиска для {query}...")
+                    # Ждем смены URL или появления контента
+                    await page.wait_for_load_state("networkidle", timeout=20000)
+                    
+                except Exception as e:
+                    print(f"DEBUG: Ошибка при взаимодействии с поиском: {e}")
+                    await page.screenshot(path="debug_search_interaction.png")
+                    print("DEBUG: Скриншот ошибки сохранен в debug_search_interaction.png")
 
+                status = response.status if response else "No Response"
+                print(f"DEBUG: Текущий URL: {page.url}")
+
+                # Костыль для отладки: сохраним HTML и скриншот если пусто
+                try:
+                    await page.wait_for_selector(".search__item, .product_price, h1, .product-list, .search-result", timeout=15000)
+                except Exception as e:
+                    print(f"DEBUG: Селекторы не найдены за 15с: {e}")
+                    content = await page.content()
+                    with open("debug_euroauto.html", "w", encoding="utf-8") as f:
+                        f.write(content)
+                    await page.screenshot(path="debug_euroauto.png")
+                    print("DEBUG: Дамп и скриншот сохранены (debug_euroauto.html / .png)")
+                
                 current_url = page.url
                 
                 # Если сайт сразу перекинул на товар (или мы уже там)
-                if any(x in current_url for x in ["/part/new/", "/part/used/"]):
+                if any(x in current_url for x in ["/part/new/", "/part/used/", "/part/"]):
+                    print(f"DEBUG: Перенаправлено на страницу товара: {current_url}")
                     items = await self._extract_all_on_page(page, current_url, query)
                     results.extend(items)
                 else:
                     # Ищем список результатов
                     items = await page.query_selector_all(".search__item")
+                    print(f"DEBUG: Найдено элементов .search__item: {len(items)}")
                     
                     if not items:
                         content = await page.content()
@@ -70,14 +134,29 @@ class EuroautoParser(BaseParser):
             finally:
                 if page:
                     await page.close()
+                await context.close()
                 
             return results
 
     async def get_details(self, url: str) -> dict:
         async with self.semaphore:
-            page = await self.browser.new_page()
+            context = await self.browser.new_context(
+                user_agent=self.user_agent,
+                extra_http_headers=self.headers,
+                viewport={'width': 1920, 'height': 1080}
+            )
+            page = await context.new_page()
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                # Для деталей тоже желательно зайти через главную, если это первый запрос в сессии, 
+                # но обычно search уже "прогрел" контекст. Но здесь мы создаем новый контекст.
+                # Чтобы не плодить контексты, в будущем можно переиспользовать один.
+                await page.goto(self.base_url, wait_until="networkidle", timeout=30000)
+                await asyncio.sleep(1)
+
+                response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                if response and response.status == 403:
+                    return {"name": "Ошибка доступа (403)", "url": url, "error": "Forbidden"}
+                
                 # На странице товара нам может понадобиться собрать все варианты тоже?
                 # Но обычно get_details вызывается из списка, где мы итерируемся по ссылкам.
                 # Для Euroauto мы решили, что если мы попали на страницу товара, мы забираем ВСЕ что там есть.
@@ -87,6 +166,7 @@ class EuroautoParser(BaseParser):
                 return {"name": "Ошибка загрузки карточки", "url": url, "error": str(e)}
             finally:
                 await page.close()
+                await context.close()
 
     def _fix_url(self, url: str, base: str = "") -> str:
         if not url:

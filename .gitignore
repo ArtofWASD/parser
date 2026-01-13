@@ -1,0 +1,42 @@
+.venv/
+.venv_wsl/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+bin/
+lib/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDEs
+.idea/
+.vscode/
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Debug and Test files
+debug_*.py
+test_*.py
+repro.py
+*.html
+*.png
+!README.md
