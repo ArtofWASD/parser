@@ -30,7 +30,8 @@ class ParserManager:
         if selected_sites:
             target_parser_items = [(name, p) for name, p in self.parsers.items() if name in selected_sites]
         else:
-            target_parser_items = list(self.parsers.items())
+            # Exclude euroauto.ru from default "all" search
+            target_parser_items = [(name, p) for name, p in self.parsers.items() if name != "euroauto.ru"]
 
         if not target_parser_items:
             return {}

@@ -5,43 +5,50 @@ from .base import BaseParser
 class EuroautoParser(BaseParser):
     def __init__(self, browser: Browser, semaphore: asyncio.Semaphore):
         super().__init__(browser, semaphore)
-        self.base_url = "https://spb.euroauto.ru"
-        self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        self.headers = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-        }
+        self.base_url = "https://euroauto.ru"
+        self.headers = {}
 
     async def search(self, query: str) -> list:
         async with self.semaphore:
-            # Используем контекст с расширенными заголовками
+            # Используем контекст без ручной установки UA, чтобы Stealth работал корректно
             context = await self.browser.new_context(
-                user_agent=self.user_agent,
-                extra_http_headers=self.headers,
                 viewport={'width': 1920, 'height': 1080}
             )
             page = await context.new_page()
+            
+            # Применяем Stealth прямо здесь, так как парсер создает свой контекст
+            try:
+                from playwright_stealth import Stealth
+                await Stealth().apply_stealth_async(page)
+            except:
+                pass
+
             results = []
             
             try:
                 # ШАГ 1: Заходим на главную
-                print(f"DEBUG: Заход на главную {self.base_url} для начала поиска...")
-                response = await page.goto(self.base_url, wait_until="networkidle", timeout=30000)
+                print(f"DEBUG: Заход на главную {self.base_url} для прохождения проверки Qrator...")
+                response = await page.goto(self.base_url, wait_until="domcontentloaded", timeout=30000)
                 
                 if response and response.status in [401, 403]:
-                    print(f"DEBUG: Доступ заблокирован на главной (Статус: {response.status})")
-                    return [{
-                        "searched_query": query,
-                        "error": f"Доступ заблокирован (Статус: {response.status}).",
-                        "site": "euroauto.ru"
-                    }]
+                    print(f"DEBUG: Получен статус {response.status} (проверка Qrator). Ждем 15 сек...")
+                    await asyncio.sleep(15)
+                    
+                    # Попробуем зайти сразу на страницу поиска
+                    search_url = f"{self.base_url}/search/?q={query}"
+                    print(f"DEBUG: Пробуем прямой переход на поиск: {search_url}")
+                    response = await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+                    print(f"DEBUG: Статус после прямого перехода: {response.status if response else 'None'}")
+                    
+                    if response and response.status in [401, 403]:
+                        print("DEBUG: Прямой переход тоже заблокирован. Пробуем финальную перезагрузку...")
+                        await asyncio.sleep(5)
+                        await page.reload(wait_until="networkidle")
+                    
+                    print(f"DEBUG: URL после всех попыток: {page.url}")
+                    
+                    # Если статус все еще 401 на той же странице - тогда ой.
+                    # Но обычно Qrator редиректит или обновляет страницу.
                 
                 # ШАГ 2: Ищем поле поиска и вводим запрос
                 # Селекторы для поиска: #header-search, input[name='q'], .hd_search-input
@@ -72,16 +79,16 @@ class EuroautoParser(BaseParser):
                 status = response.status if response else "No Response"
                 print(f"DEBUG: Текущий URL: {page.url}")
 
-                # Костыль для отладки: сохраним HTML и скриншот если пусто
+                # Костыль для отладки: сохраним HTML и скриншот если пусто (нет результатов)
                 try:
                     await page.wait_for_selector(".search__item, .product_price, h1, .product-list, .search-result", timeout=15000)
                 except Exception as e:
-                    print(f"DEBUG: Селекторы не найдены за 15с: {e}")
+                    print(f"DEBUG: Искомые селекторы не найдены за 15с.")
                     content = await page.content()
                     with open("debug_euroauto.html", "w", encoding="utf-8") as f:
                         f.write(content)
                     await page.screenshot(path="debug_euroauto.png")
-                    print("DEBUG: Дамп и скриншот сохранены (debug_euroauto.html / .png)")
+                    print("DEBUG: Дамп и скриншот сохранены для анализа (debug_euroauto.html / .png)")
                 
                 current_url = page.url
                 

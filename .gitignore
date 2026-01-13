@@ -34,9 +34,10 @@ wheels/
 Thumbs.db
 
 # Debug and Test files
-debug_*.py
+debug_*
 test_*.py
 repro.py
+verify_logic.py
 *.html
 *.png
 !README.md

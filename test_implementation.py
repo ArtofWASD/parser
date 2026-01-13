@@ -1,39 +1,47 @@
+import asyncio
+import json
+import os
 from playwright.async_api import async_playwright
 import playwright_stealth
 from parsers.euroauto import EuroautoParser
 
 async def test():
     async with async_playwright() as p:
-        # Включаем видимый режим (headless=False), чтобы увидеть, что происходит
+        # Используем глубокий перехват (Deep Hooking) с эмуляцией Windows
         try:
+            from playwright_stealth import Stealth
+            # Явно просим Stealth косить под Windows, так как мы в Linux/WSL
+            stealth = Stealth(
+                navigator_platform_override="Win32",
+                navigator_user_agent_override="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            stealth.hook_playwright_context(p)
+            
             browser = await p.chromium.launch(
-                headless=False, 
+                headless=False,  # Включаем окно! Так Qrator нас не найдет
                 args=[
                     "--disable-blink-features=AutomationControlled",
                 ]
             )
         except Exception as e:
-            print(f"ОШИБКА: Не удалось запустить браузер.\n{e}")
+            print(f"ОШИБКА: Не удалось запустить браузер с маскировкой.\n{e}")
             return
 
         semaphore = asyncio.Semaphore(5)
         parser = EuroautoParser(browser, semaphore)
         
-        # Создаем контекст и применяем stealth-настройки
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
-        # Применяем stealth для маскировки
-        try:
-            await playwright_stealth.stealth_async(page)
-        except Exception as e:
-            print(f"DEBUG: Не удалось применить stealth: {e}")
+        # Парсер сам применит Stealth к своему контексту, так как мы пропатчили 'browser' через 'p'
+        print("DEBUG: Запуск теста. Используется Deep Stealth Hooking.")
         
-        # Передаем уже созданную страницу в парсер (нужно немного изменить search)
-        # Но для начала просто проверим, пустит ли нас на главную
         query = "1782109"
-        print(f"--- Тестирование Euroauto (Stealth + Headless=False) для: {query} ---")
+        print(f"--- Тестирование Euroauto (Stealth + Headless=True) для: {query} ---")
+        # Проверим IP еще раз
+        try:
+            import subprocess
+            res = subprocess.run(['curl', '-s', 'ipinfo.io'], capture_output=True, text=True)
+            print(f"DEBUG: Текущий IP/Провайдер:\n{res.stdout}")
+        except:
+            pass
         
         try:
             results = await parser.search(query)
