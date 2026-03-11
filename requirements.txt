@@ -3,3 +3,4 @@ playwright
 uvicorn
 pydantic
 playwright-stealth
+httpx
