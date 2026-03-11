@@ -2,7 +2,6 @@ import asyncio
 from playwright.async_api import Browser
 from .skladmotorov import SkladMotorovParser
 from .leoparts import LeopartsParser
-from .euroauto import EuroautoParser
 
 class ParserManager:
     def __init__(self, browser: Browser, max_concurrent_pages: int = 10):
@@ -11,7 +10,6 @@ class ParserManager:
         self.parsers = {
             "skladmotorov.ru": SkladMotorovParser(browser, self.semaphore),
             "leoparts.ru": LeopartsParser(browser, self.semaphore),
-            "euroauto.ru": EuroautoParser(browser, self.semaphore),
         }
 
     def get_sites(self) -> list[str]:
@@ -24,14 +22,12 @@ class ParserManager:
         Возвращает структурированный словарь: { сайт: { запрос: [результаты] } }
         """
         tasks = []
-        
+
         # Определяем по каким парсерам искать
-        target_parser_items = []
         if selected_sites:
             target_parser_items = [(name, p) for name, p in self.parsers.items() if name in selected_sites]
         else:
-            # Exclude euroauto.ru from default "all" search
-            target_parser_items = [(name, p) for name, p in self.parsers.items() if name != "euroauto.ru"]
+            target_parser_items = list(self.parsers.items())
 
         if not target_parser_items:
             return {}
@@ -43,18 +39,15 @@ class ParserManager:
         for query in queries:
             for site_name, parser in target_parser_items:
                 tasks.append(buffered_search(site_name, parser, query))
-        
+
         # Запускаем все задачи одновременно
         raw_results = await asyncio.gather(*tasks)
-        
+
         # Группируем результаты
         grouped_results = {}
         for site_name, query, items in raw_results:
             if site_name not in grouped_results:
                 grouped_results[site_name] = {}
-            
-            # Добавляем результаты в список для конкретного запроса на конкретном сайте
-            # Если items уже содержат инфо о "не найдено", они просто попадут в список
             grouped_results[site_name][query] = items
-            
+
         return grouped_results
