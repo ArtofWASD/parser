@@ -10,16 +10,30 @@ from typing import Optional
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global browser, playwright_context, parser_manager
-    playwright_context = await async_playwright().start()
-    browser = await playwright_context.chromium.launch(
-        headless=True,
-        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-    )
-    # Настройка лимита одновременно открытых страниц (изменено с 15 до 5 для стабильности)
-    parser_manager = ParserManager(browser, max_concurrent_pages=5)
+    browser = None
+    playwright_context = None
+    parser_manager = None
+    
+    try:
+        playwright_context = await async_playwright().start()
+        browser = await playwright_context.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        )
+        # Настройка лимита одновременно открытых страниц
+        parser_manager = ParserManager(browser, max_concurrent_pages=5)
+        print("INFO: Browser launched successfully")
+    except Exception as e:
+        print(f"ERROR: Failed to launch browser: {e}")
+        # Создаем менеджер без браузера, чтобы API не падал
+        parser_manager = ParserManager(None, max_concurrent_pages=5)
+        
     yield
-    await browser.close()
-    await playwright_context.stop()
+    
+    if browser:
+        await browser.close()
+    if playwright_context:
+        await playwright_context.stop()
 
 app = FastAPI(lifespan=lifespan)
 
