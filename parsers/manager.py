@@ -51,3 +51,4 @@ class ParserManager:
             grouped_results[site_name][query] = items
 
         return grouped_results
+        # some commit
