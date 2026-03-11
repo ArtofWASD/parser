@@ -1,5 +1,5 @@
 # Используем актуальную версию образа, которую просит Playwright в логах
-FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.58.0-jammy
 
 WORKDIR /app
 
