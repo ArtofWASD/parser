@@ -67,5 +67,30 @@ async def search_post(request: SearchRequest):
     results = await parser_manager.search_all(request.queries, selected_sites)
     return {"results": results}
 
+@app.get("/debug-dns")
+async def debug_dns(domain: str = "leoparts.ru"):
+    """Диагностика DNS резолвинга"""
+    import socket
+    try:
+        ip = socket.gethostbyname(domain)
+        return {"domain": domain, "ip": ip, "status": "resolved"}
+    except Exception as e:
+        return {"domain": domain, "error": str(e), "status": "failed"}
+
+@app.get("/debug-connectivity")
+async def debug_connectivity(url: str = "https://leoparts.ru"):
+    """Проверка доступности URL через библиотеку httpx"""
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10.0)
+            return {
+                "url": url,
+                "status_code": response.status_code,
+                "headers": dict(response.headers)
+            }
+    except Exception as e:
+        return {"url": url, "error": str(e), "status": "failed"}
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
